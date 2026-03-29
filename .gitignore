@@ -1,0 +1,12 @@
+# Build
+build/
+
+# IDE
+.vs/
+.vscode/
+*.user
+CMakeSettings.json
+
+# OS
+Thumbs.db
+Desktop.ini
