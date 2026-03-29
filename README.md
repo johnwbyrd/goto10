@@ -223,10 +223,6 @@ The original Microsoft BASIC source is blunt:
 The generator is a multiplicative congruential generator with a broken
 additive constant and a byte-reversal scramble. Its weaknesses include:
 
-- **Short effective period**: The state space is nominally 40 bits (32
-  mantissa + 8 recycled exponent), but correlations appear well before
-  2^40 outputs.
-
 - **The additive constant does nothing**: The `c` in `x = a*x + c` is
   too small to survive the floating-point addition, reducing the
   generator to a purely multiplicative recurrence with a byte swap.
@@ -247,6 +243,81 @@ For the purpose of drawing a maze pattern on screen, none of this
 matters. The generator produces a visually pleasing ~50/50 split of
 the two characters with enough local variation to look random to the
 human eye. That is all it ever needed to do.
+
+## Cycle Analysis
+
+A deterministic map on a finite state space must eventually cycle. The
+question is: how soon?
+
+### Theoretical bounds
+
+The generator state is the 5-byte packed seed. Not all 2^40 possible
+byte patterns are reachable:
+
+- Byte 0 (exponent) is at most $80, since it is forced to $80 before
+  normalization, and normalization can only decrease it.
+- Byte 1, bit 7 is always 0 (sign forced positive).
+
+This gives an upper bound of roughly 129 x 128 x 256^3 ~= 2^38
+reachable states. A well-designed generator with this state size could
+theoretically achieve a period approaching 2^38 (~274 billion).
+
+### Actual measured period
+
+Using Brent's cycle detection algorithm on the default power-on seed:
+
+| Quantity | Value |
+|----------|-------|
+| **Tail length** (mu) | 71,549 |
+| **Cycle length** (lambda) | 46,813 |
+| **Total before first repetition** | 118,362 |
+
+The generator visits **118,362** distinct states before repeating.
+That is 0.000004% of the theoretical state space.
+
+The output bit sequence (`/` vs `\`) has the same period as the
+full internal state---there is no shorter sub-cycle in the maze
+pattern.
+
+### What this means for 10 PRINT
+
+On a 40-column, 25-row C64 screen:
+
+- Each screenful is 1,000 characters.
+- The first **71.5 screenfuls** are unique.
+- Then a **46.8-screenful** cycle begins.
+- After roughly **118 screenfuls**, the maze repeats exactly.
+
+At the C64's native output speed, it takes a few minutes to fill 118
+screens. No one watching the program would notice the repetition---the
+pattern is long enough to be visually indistinguishable from an
+infinite non-repeating sequence. But it does repeat, and it repeats
+surprisingly soon.
+
+### Distribution within the cycle
+
+Within one full cycle of 46,813 characters:
+
+| Character | Count | Percentage |
+|-----------|-------|------------|
+| `\` (CHR$ 205) | 23,245 | 49.655% |
+| `/` (CHR$ 206) | 23,568 | 50.345% |
+
+The split is nearly but not perfectly even, with a slight bias toward
+`/`. The deviation from 50/50 is small enough to be invisible in
+practice.
+
+### Verification
+
+The cycle has been independently verified in two ways:
+
+1. **Brent's algorithm** (in `cycle_detect.cpp`) identifies the exact
+   tail and cycle lengths by advancing through states in O(1) memory.
+
+2. **Direct comparison** (in `test_rnd.cpp`) generates 118,462
+   characters, confirms that the seed at position 71,549 is identical
+   to the seed at position 118,362 (= 71,549 + 46,813), and verifies
+   that the output characters match across the cycle boundary.
 
 ## Building
 

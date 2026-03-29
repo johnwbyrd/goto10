@@ -8,3 +8,6 @@ add_library(c64rnd c64rnd.cpp c64rnd.h)
 
 add_executable(test_rnd test_rnd.cpp)
 target_link_libraries(test_rnd PRIVATE c64rnd)
+
+add_executable(cycle_detect cycle_detect.cpp)
+target_link_libraries(cycle_detect PRIVATE c64rnd)
