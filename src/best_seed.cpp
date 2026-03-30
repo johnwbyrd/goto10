@@ -1,5 +1,5 @@
 // Scan RND(-N) seeds with dynamic programming and threading.
-// Shared known-state map with readers-writer lock.
+// Tracks cycle ID and distance-to-cycle for every visited state.
 
 #include "c64rnd.h"
 #include <cstdio>
@@ -68,38 +68,62 @@ static void brent(const C64Rnd::Seed& seed, uint64_t& mu, uint64_t& lambda) {
     while (tortoise.seed() != hare.seed()) { tortoise.next(); hare.next(); mu++; }
 }
 
-// Shared state
+struct StateInfo {
+    uint32_t cycle_id;
+    uint32_t distance;  // steps from this state to the cycle entry point
+};
+
 struct CycleInfo { uint64_t length; uint32_t first_n; };
-static std::unordered_map<uint64_t, size_t> g_known;
+
+static std::unordered_map<uint64_t, StateInfo> g_known;
 static std::vector<CycleInfo> g_cycles;
 static std::shared_mutex g_mutex;
 static std::atomic<uint64_t> g_best_cycle{0};
+static std::atomic<uint64_t> g_best_total{0};  // best tail + cycle
+static std::atomic<uint32_t> g_best_total_n{0};
 static std::atomic<uint64_t> g_seeds_done{0};
 
-// Look up a state. Returns cycle index or SIZE_MAX if unknown.
-static size_t lookup(uint64_t enc) {
+struct LookupResult { bool found; uint32_t cycle_id; uint32_t distance; };
+
+static LookupResult lookup(uint64_t enc) {
     std::shared_lock lock(g_mutex);
     auto it = g_known.find(enc);
-    return (it != g_known.end()) ? it->second : SIZE_MAX;
+    if (it != g_known.end())
+        return {true, it->second.cycle_id, it->second.distance};
+    return {false, 0, 0};
 }
 
-// Add a batch of states to the known map, all tagged with cycle_idx.
-static void add_known(const std::vector<uint64_t>& states, size_t cycle_idx) {
+// Add trail states with computed distances. trail[0] = seed, trail[last] = one step before hit.
+// hit_distance = distance of the state that was hit.
+static void add_trail(const std::vector<uint64_t>& trail, uint32_t cycle_id, uint32_t hit_distance) {
     std::unique_lock lock(g_mutex);
-    for (auto e : states) g_known[e] = cycle_idx;
+    uint32_t n = (uint32_t)trail.size();
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t dist = (n - i) + hit_distance;
+        g_known[trail[i]] = {cycle_id, dist};
+    }
 }
 
-// Register a new cycle. Returns the cycle index.
-static size_t register_cycle(uint64_t length, uint32_t first_n, const C64Rnd::Seed& entry) {
+static size_t register_cycle(uint64_t length, uint32_t first_n, const C64Rnd::Seed& entry,
+                              const C64Rnd::Seed& seed, uint64_t mu) {
     std::unique_lock lock(g_mutex);
     size_t idx = g_cycles.size();
     g_cycles.push_back({length, first_n});
-    // Add all cycle states
+
+    // Cycle states: distance = 0
     C64Rnd cyc(entry);
     for (uint64_t i = 0; i < length; i++) {
-        g_known[encode(cyc.seed())] = idx;
+        g_known[encode(cyc.seed())] = {(uint32_t)idx, 0};
         cyc.next();
     }
+
+    // Tail states: distance = mu - i
+    C64Rnd tw(seed);
+    for (uint64_t i = 0; i < mu; i++) {
+        g_known[encode(tw.seed())] = {(uint32_t)idx, (uint32_t)(mu - i)};
+        tw.next();
+    }
+
     return idx;
 }
 
@@ -109,55 +133,66 @@ static void worker(uint32_t start, uint32_t end) {
         uint64_t enc = encode(seed);
         if (enc == 0) { g_seeds_done++; continue; }
 
-        // Quick check
-        size_t idx = lookup(enc);
-        if (idx != SIZE_MAX) { g_seeds_done++; continue; }
+        auto lr = lookup(enc);
+        if (lr.found) {
+            // Update best total
+            uint64_t clen;
+            { std::shared_lock lock(g_mutex); clen = g_cycles[lr.cycle_id].length; }
+            uint64_t total = lr.distance + clen;
+            uint64_t prev = g_best_total.load();
+            while (total > prev && !g_best_total.compare_exchange_weak(prev, total)) {}
+            if (total > prev) g_best_total_n.store(n);
+            g_seeds_done++;
+            continue;
+        }
 
-        // Walk forward collecting trail
+        // Walk forward
         C64Rnd rng(seed);
         std::vector<uint64_t> trail;
         trail.push_back(enc);
-        size_t cycle_idx = SIZE_MAX;
+        uint32_t hit_cycle = UINT32_MAX;
+        uint32_t hit_distance = 0;
 
         for (uint64_t step = 0; step < 10000000; step++) {
             rng.next();
             uint64_t e = encode(rng.seed());
-            idx = lookup(e);
-            if (idx != SIZE_MAX) {
-                cycle_idx = idx;
+            auto lr2 = lookup(e);
+            if (lr2.found) {
+                hit_cycle = lr2.cycle_id;
+                hit_distance = lr2.distance;
                 break;
             }
             trail.push_back(e);
         }
 
-        if (cycle_idx == SIZE_MAX) {
-            // New cycle. Run Brent's.
+        if (hit_cycle == UINT32_MAX) {
+            // New cycle
             uint64_t mu, lambda;
             brent(seed, mu, lambda);
-
-            // Find cycle entry
             C64Rnd walker(seed);
             for (uint64_t i = 0; i < mu; i++) walker.next();
-
-            cycle_idx = register_cycle(lambda, n, walker.seed());
-
-            // Add tail states
-            std::vector<uint64_t> tail_states;
-            C64Rnd tw(seed);
-            for (uint64_t i = 0; i < mu; i++) {
-                tail_states.push_back(encode(tw.seed()));
-                tw.next();
-            }
-            add_known(tail_states, cycle_idx);
+            size_t idx = register_cycle(lambda, n, walker.seed(), seed, mu);
 
             uint64_t prev = g_best_cycle.load();
-            while (lambda > prev && !g_best_cycle.compare_exchange_weak(prev, lambda));
+            while (lambda > prev && !g_best_cycle.compare_exchange_weak(prev, lambda)) {}
 
-            printf("  NEW CYCLE #%zu: len=%llu from RND(-%u)\n",
-                   cycle_idx, (unsigned long long)lambda, n);
+            uint64_t total = mu + lambda;
+            prev = g_best_total.load();
+            while (total > prev && !g_best_total.compare_exchange_weak(prev, total)) {}
+            if (total > prev) g_best_total_n.store(n);
+
+            printf("  NEW CYCLE #%zu: len=%llu from RND(-%u) mu=%llu\n",
+                   idx, (unsigned long long)lambda, n, (unsigned long long)mu);
         } else {
-            // Tag trail with known cycle
-            add_known(trail, cycle_idx);
+            add_trail(trail, hit_cycle, hit_distance);
+
+            uint64_t clen;
+            { std::shared_lock lock(g_mutex); clen = g_cycles[hit_cycle].length; }
+            uint64_t tail = (uint32_t)trail.size() + hit_distance;
+            uint64_t total = tail + clen;
+            uint64_t prev = g_best_total.load();
+            while (total > prev && !g_best_total.compare_exchange_weak(prev, total)) {}
+            if (total > prev) g_best_total_n.store(n);
         }
 
         g_seeds_done++;
@@ -165,7 +200,7 @@ static void worker(uint32_t start, uint32_t end) {
 }
 
 int main(int argc, char* argv[]) {
-    uint32_t max_n = 216000;  // 1 hour of jiffies
+    uint32_t max_n = 216000;
     unsigned num_threads = std::thread::hardware_concurrency();
     if (num_threads == 0) num_threads = 4;
 
@@ -187,40 +222,41 @@ int main(int argc, char* argv[]) {
         threads.emplace_back(worker, s, e);
     }
 
-    // Progress monitor
-    while (true) {
-        bool all_done = true;
-        for (auto& th : threads) if (th.joinable()) { all_done = false; break; }
-        if (all_done) break;
-
-        uint64_t done = g_seeds_done.load();
-        if (done >= max_n) break;
-
-        auto now = std::chrono::steady_clock::now();
-        double secs = std::chrono::duration<double>(now - t0).count();
-        size_t nknown, ncycles;
-        { std::shared_lock lock(g_mutex); nknown = g_known.size(); ncycles = g_cycles.size(); }
-        printf("[%.0fs] %llu/%u seeds | %zu known | %zu cycles | best=%llu\n",
-               secs, (unsigned long long)done, max_n, nknown, ncycles,
-               (unsigned long long)g_best_cycle.load());
-
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-    }
+    std::atomic<bool> done{false};
+    std::thread monitor([&]() {
+        while (!done.load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            if (done.load()) break;
+            uint64_t d = g_seeds_done.load();
+            auto now = std::chrono::steady_clock::now();
+            double secs = std::chrono::duration<double>(now - t0).count();
+            size_t nk, nc;
+            { std::shared_lock lock(g_mutex); nk = g_known.size(); nc = g_cycles.size(); }
+            printf("[%.0fs] %llu/%u | %zu known | %zu cycles | best_cycle=%llu best_total=%llu (n=%u)\n",
+                   secs, (unsigned long long)d, max_n, nk, nc,
+                   (unsigned long long)g_best_cycle.load(),
+                   (unsigned long long)g_best_total.load(),
+                   g_best_total_n.load());
+        }
+    });
 
     for (auto& th : threads) th.join();
+    done.store(true);
+    monitor.join();
 
     auto t1 = std::chrono::steady_clock::now();
     double secs = std::chrono::duration<double>(t1 - t0).count();
 
     printf("\n=== RESULTS ===\n");
     printf("Time: %.1f seconds\n", secs);
-    printf("Seeds tested: %u\n", max_n);
-    printf("Known states: %zu\n", g_known.size());
-    printf("Best cycle: %llu\n\n", (unsigned long long)g_best_cycle.load());
+    printf("Seeds: %u | Known states: %zu\n", max_n, g_known.size());
+    printf("Best cycle: %llu\n", (unsigned long long)g_best_cycle.load());
+    printf("Best total (tail+cycle): %llu from RND(-%u)\n",
+           (unsigned long long)g_best_total.load(), g_best_total_n.load());
 
+    printf("\nAll distinct cycles:\n");
     std::sort(g_cycles.begin(), g_cycles.end(),
               [](const CycleInfo& a, const CycleInfo& b) { return a.length > b.length; });
-    printf("All distinct cycles:\n");
     for (auto& c : g_cycles)
         printf("  cycle=%llu  first_n=%u\n", (unsigned long long)c.length, c.first_n);
 
