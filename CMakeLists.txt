@@ -20,6 +20,7 @@ add_executable(compare_sampled src/compare_sampled.cpp)
 target_link_libraries(compare_sampled PRIVATE c64rnd)
 
 add_executable(best_seed src/best_seed.cpp)
+target_link_libraries(best_seed PRIVATE c64rnd)
 
 add_executable(debug_multiply src/debug_multiply.cpp)
 target_link_libraries(debug_multiply PRIVATE c64rnd)
