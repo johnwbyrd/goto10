@@ -1,0 +1,176 @@
+C64 BASIC ROM - RND Function Disassembly
+=========================================
+Source: https://www.pagetable.com/c64ref/c64disasm/
+
+Memory locations:
+  $61 = FACEXP  (FAC1 exponent)
+  $62 = FACHO   (FAC1 mantissa 1)
+  $63 = FACMOH  (FAC1 mantissa 2)
+  $64 = FACMO   (FAC1 mantissa 3)
+  $65 = FACLO   (FAC1 mantissa 4)
+  $66 = FACSGN  (FAC1 sign)
+  $70 = FACOV   (FAC1 rounding byte)
+  $8B-$8F = RNDX (RND seed, 5-byte MBF float)
+
+Subroutines called:
+  $BC2B = SIGN    - get FAC1 sign into A ($FF=-ve, $01=+ve, $00=zero)
+  $BBA2 = MOVFM   - unpack memory (AY) into FAC1
+  $BA28 = FMULT   - FAC1 = FAC1 * (AY)  [memory float at address AY]
+  $B867 = FADD    - FAC1 = FAC1 + (AY)  [memory float at address AY]
+  $B8D7 = NORMAL  - normalise FAC1
+  $BBD4 = MOVMF   - pack FAC1 into (XY) [store to memory at address XY]
+  $FFF3 = (Kernal) return base address of I/O devices
+
+=== RND Constants ===
+
+$E08D: RMULZC (multiplier constant)
+  Bytes: $98 $35 $44 $7A $00
+  Value: 11879546 (as MBF float)
+
+  MBF interpretation: exponent=$98 (decimal 152, biased by 128 = actual 24)
+  mantissa bytes: $35 $44 $7A $00 (with implicit high bit set = $B5 $44 $7A $00)
+  So the float = 2^24 * 0.B5447A00 = 16777216 * 0.70800781 = 11879546.0
+
+$E092: RADDZC (additive constant)
+  Bytes: $68 $28 $B1 $46 $00
+  Value: 3.927677739E-8 (effectively does nothing due to small exponent)
+
+=== RND Function ($E097-$E0F6) ===
+
+; Entry: FAC1 contains the argument to RND()
+; For "10 PRINT" program, RND(1) means argument > 0
+
+E097  JSR $BC2B     ; SIGN - get sign of argument into A
+                    ; A=$FF if negative, A=$01 if positive, A=$00 if zero
+
+E09A  BMI $E0D3     ; if n<0, jump to RND1 (reseed from argument)
+
+E09C  BNE $E0BE     ; if n>0, jump to QSETNR (get next in sequence)
+                    ; if n=0, fall through to read hardware timers
+
+; --- n=0 path: seed from CIA timers ---
+E09E  JSR $FFF3     ; get base address of I/O devices
+E0A1  STX $22       ; store pointer low byte
+E0A3  STY $23       ; store pointer high byte
+E0A5  LDY #$04      ; index to T1 low byte
+E0A7  LDA ($22),Y   ; get T1 low byte
+E0A9  STA $62       ; -> FAC1 mantissa 1
+E0AB  INY           ; index to T1 high byte
+E0AC  LDA ($22),Y   ; get T1 high byte
+E0AE  STA $64       ; -> FAC1 mantissa 3
+E0B0  LDY #$08      ; index to T2 low byte
+E0B2  LDA ($22),Y   ; get T2 low byte
+E0B4  STA $63       ; -> FAC1 mantissa 2
+E0B6  INY           ; index to T2 high byte
+E0B7  LDA ($22),Y   ; get T2 high byte
+E0B9  STA $65       ; -> FAC1 mantissa 4
+E0BB  JMP $E0E3     ; jump to set exponent and exit
+
+; --- n>0 path: compute next value in sequence ---
+QSETNR:
+E0BE  LDA #$8B      ; pointer low byte to RNDX seed
+E0C0  LDY #$00      ; pointer high byte to RNDX seed (zero page)
+E0C2  JSR $BBA2     ; MOVFM - load seed into FAC1
+
+E0C5  LDA #$8D      ; pointer low byte to RMULZC (multiplier)
+E0C7  LDY #$E0      ; pointer high byte to RMULZC
+E0C9  JSR $BA28     ; FMULT - FAC1 = seed * 11879546
+
+E0CC  LDA #$92      ; pointer low byte to RADDZC (additive constant)
+E0CE  LDY #$E0      ; pointer high byte to RADDZC
+E0D0  JSR $B867     ; FADD - FAC1 = FAC1 + 3.927677739E-8
+                    ; (NOTE: "THIS DOES NOTHING, DUE TO SMALL EXPONENT")
+
+; --- Byte shuffle (entered from n<0 path too) ---
+RND1:
+E0D3  LDX $65       ; get FAC1 mantissa 4
+E0D5  LDA $62       ; get FAC1 mantissa 1
+E0D7  STA $65       ; mantissa 1 -> mantissa 4
+E0D9  STX $62       ; mantissa 4 -> mantissa 1
+                    ; (swap mantissa bytes 1 and 4)
+
+E0DB  LDX $63       ; get FAC1 mantissa 2
+E0DD  LDA $64       ; get FAC1 mantissa 3
+E0DF  STA $63       ; mantissa 3 -> mantissa 2
+E0E1  STX $64       ; mantissa 2 -> mantissa 3
+                    ; (swap mantissa bytes 2 and 3)
+
+; --- Make result 0.0 <= x < 1.0 ---
+STRNEX:
+E0E3  LDA #$00      ;
+E0E5  STA $66       ; clear FAC1 sign (force positive)
+E0E7  LDA $61       ; get FAC1 exponent
+E0E9  STA $70       ; move exponent to rounding byte
+E0EB  LDA #$80      ; exponent $80 = 2^0 = values 0.5 to <1.0
+E0ED  STA $61       ; set FAC1 exponent
+E0EF  JSR $B8D7     ; NORMAL - normalise FAC1
+
+; --- Store result back as new seed ---
+E0F2  LDX #$8B      ; pointer low byte to RNDX
+E0F4  LDY #$00      ; pointer high byte to RNDX
+E0F6  JMP $BBD4     ; MOVMF - store FAC1 to RNDX seed and return
+
+=== ALGORITHM SUMMARY ===
+
+For RND(1) (positive argument, the normal case in "10 PRINT"):
+
+1. Load 5-byte seed from $8B-$8F into FAC1
+2. Multiply by 11879546 (floating point)
+3. Add 3.927677739E-8 (effectively a no-op due to tiny magnitude)
+4. Swap mantissa bytes: byte1<->byte4, byte2<->byte3
+5. Force sign positive
+6. Move exponent to rounding byte, set exponent to $80
+7. Normalize the result (makes it 0.0 <= x < 1.0)
+8. Store result back as new seed
+9. Return result in FAC1
+
+This is essentially a linear congruential generator operating on the
+mantissa bytes of a floating point number:
+  seed = seed * 11879546  (mod 2^32, via float truncation)
+  then byte-swap the mantissa for additional scrambling
+  then force into range [0, 1)
+
+=== DEFAULT SEED (confirmed from c64mem reference) ===
+
+The initial seed at $8B-$8F on power-up is copied from ROM.
+The 5 bytes at RNDX ($8B-$8F) are:
+  $80 $4F $C7 $52 $58
+
+MBF float format: [exponent] [mantissa1] [mantissa2] [mantissa3] [mantissa4]
+  exponent = $80 = 128 (bias 128, so actual exponent = 0, meaning 2^0 = 1)
+  mantissa = $4F $C7 $52 $58 (with implicit MSB set = $CF $C7 $52 $58)
+  Value = 1.0 * 0.CF C7 52 58 (hex) = 0.8116351...
+
+The seed persists across calls — the sequence is fully deterministic
+from any given starting seed. "10 PRINT" uses RND(1) which always
+takes the n>0 path through the algorithm.
+
+=== MBF FLOAT FORMAT ===
+
+Microsoft Binary Format (MBF) 5-byte float used on C64:
+  Byte 0: Exponent (biased by 128; 0 means the number is zero)
+  Byte 1: Mantissa byte 1 (MSB; bit 7 is sign in memory, but
+           when loaded into FAC, sign goes to $66/FACSGN separately
+           and bit 7 becomes implicit 1)
+  Byte 2: Mantissa byte 2
+  Byte 3: Mantissa byte 3
+  Byte 4: Mantissa byte 4 (LSB)
+
+The mantissa has an implicit leading 1 bit (like IEEE 754).
+In memory, bit 7 of byte 1 stores the sign (0=positive, 1=negative).
+When unpacked into FAC, the sign moves to FACSGN ($66) and
+bit 7 of FACHO ($62) is restored to 1.
+
+=== WHAT "10 PRINT" ACTUALLY DOES ===
+
+  10 PRINT CHR$(205.5+RND(1)); : GOTO 10
+
+RND(1) returns a value in [0, 1).
+205.5 + RND(1) gives a value in [205.5, 206.5).
+CHR$() truncates to integer: either 205 or 206.
+  CHR$(205) = "/" (PETSCII diagonal line, upper-left to lower-right)
+  CHR$(206) = "\" (PETSCII diagonal line, upper-right to lower-left)
+The ";" suppresses newline, so characters fill the screen continuously.
+GOTO 10 loops forever.
+
+The visual result: a random maze-like pattern of diagonal lines.

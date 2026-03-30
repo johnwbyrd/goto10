@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/git/goto10/**)",
+      "Read(//tmp/**)",
+      "Bash(cmake -B build)",
+      "Bash(./build/Release/test_rnd.exe)"
+    ],
+    "additionalDirectories": [
+      "C:\\git\\goto10\\docs\\refs",
+      "C:\\git\\goto10"
+    ]
+  }
+}
