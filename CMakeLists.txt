@@ -25,5 +25,8 @@ target_link_libraries(best_seed PRIVATE c64rnd)
 add_executable(debug_multiply src/debug_multiply.cpp)
 target_link_libraries(debug_multiply PRIVATE c64rnd)
 
+add_executable(cycle_zeros src/cycle_zeros.cpp)
+target_link_libraries(cycle_zeros PRIVATE c64rnd)
+
 add_executable(gen_seeds src/gen_seeds.cpp)
 target_link_libraries(gen_seeds PRIVATE c64rnd)
