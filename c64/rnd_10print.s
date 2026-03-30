@@ -33,6 +33,7 @@ entry:
     ; Init 16-bit counter to 0
     lda #0
     sta count_lo
+    sta count_mi
     sta count_hi
 
 mainloop:
@@ -210,6 +211,8 @@ hextable:
 
 .section .bss,"aw",@nobits
 count_lo:
+    .byte 0
+count_mi:
     .byte 0
 count_hi:
     .byte 0

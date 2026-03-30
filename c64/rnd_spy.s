@@ -1,4 +1,4 @@
-; rnd_spy.s — Pure RND(1), 1000000 iterations.
+; rnd_spy.s — Pure RND(1), 70000 iterations.
 ; Print BITS, FACOV, and seed after each RND call.
 
 .section .text,"ax",@progbits
@@ -80,15 +80,15 @@ mainloop:
     inc count_hi
 no_carry1:
 
-    ; Compare to 1000000 = $0F4240
+    ; Compare to 70000 = $011170
     lda count_hi
-    cmp #0x0F
+    cmp #0x01
     bne not_done
     lda count_mi
-    cmp #0x42
+    cmp #0x11
     bne not_done
     lda count_lo
-    cmp #0x40
+    cmp #0x70
     beq done
 not_done:
     jmp mainloop
