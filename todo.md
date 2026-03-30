@@ -6,7 +6,7 @@
 - **100,000 seeds from the actual BASIC `10 PRINT` program** match the simulation, confirming that BASIC's float operations between RND calls do not affect the seed sequence.
 - **MOVFM clears FACOV** (code20 line 30), making RND a pure function of its 5-byte seed regardless of calling context.
 - **12 distinct cycles** found by scanning 432,000 integer seeds (RND(-1) through RND(-432000)). The longest is 58,078.
-- **Two FMULT bugs** discovered and replicated: the carry leak between zero multiplier bytes, and the non-trivial FADD contribution at low exponents. Both are documented in `doc/fmult_carry_bug.md`.
+- **Two FMULT bugs** discovered and replicated: the carry leak between zero multiplier bytes, and the non-trivial FADD contribution at low exponents. Both are documented in `doc/microsoft_bugs.md`.
 
 ## Open
 

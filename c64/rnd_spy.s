@@ -91,15 +91,15 @@ mainloop:
     inc count_hi
 no_carry1:
 
-    ; Compare to 70000 = $011170
+    ; Compare to 1000000 = $0F4240
     lda count_hi
-    cmp #0x01
+    cmp #0x0F
     bne not_done
     lda count_mi
-    cmp #0x11
+    cmp #0x42
     bne not_done
     lda count_lo
-    cmp #0x70
+    cmp #0x40
     beq done
 not_done:
     jmp mainloop

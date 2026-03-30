@@ -45,7 +45,7 @@ Run `cycle_detect` to get current values for:
 
 ## Two bugs in Microsoft's FMULT
 
-The simulation's accuracy depends on replicating two undocumented behaviors in the C64's FMULT routine. See [doc/fmult_carry_bug.md](fmult_carry_bug.md) for details.
+The simulation's accuracy depends on replicating two undocumented behaviors in the C64's FMULT routine. See [doc/microsoft_bugs.md](microsoft_bugs.md) for details.
 
 1. **Carry leak**: When a multiplier byte is zero, the MULSHF routine falls through into SHIFTR, which uses the carry flag left by the previous byte's last LSR instruction. This causes a 9-bit shift instead of the expected 8-bit shift when the carry is 0.
 
