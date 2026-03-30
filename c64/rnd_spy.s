@@ -1,4 +1,4 @@
-; rnd_spy.s — Pure RND(1) only, 50000 iterations. No FADD, no QINT.
+; rnd_spy.s — Pure RND(1), 1000000 iterations.
 ; Print BITS, FACOV, and seed after each RND call.
 
 .section .text,"ax",@progbits
@@ -14,7 +14,6 @@ _start:
     .byte 0x00, 0x00
 
 entry:
-    ; Open printer
     lda #4
     ldx #4
     ldy #0
@@ -29,19 +28,17 @@ entry:
     jsr 0xFFC9
     bcs chkout_error
 
-    ; Init 16-bit counter
     lda #0
     sta count_lo
+    sta count_mi
     sta count_hi
 
 mainloop:
-    ; Capture BITS and FACOV before RND
     lda 0x68
     sta saved_bits
     lda 0x70
     sta saved_facov
 
-    ; Set FAC = 1.0
     lda #0x81
     sta 0x61
     lda #0x80
@@ -52,15 +49,12 @@ mainloop:
     sta 0x65
     sta 0x66
 
-    ; RND(1)
     jsr 0xE097
 
-    ; Re-establish printer
     ldx #4
     jsr 0xFFC9
     bcs loop_chkout_error
 
-    ; Print 7 hex bytes: bits, facov, seed[0..4]
     lda saved_bits
     jsr print_hex_space
     lda saved_facov
@@ -78,18 +72,23 @@ mainloop:
     lda #0x0D
     jsr 0xFFD2
 
-    ; Increment 16-bit counter
+    ; Increment 24-bit counter
     inc count_lo
-    bne no_carry
+    bne no_carry1
+    inc count_mi
+    bne no_carry1
     inc count_hi
-no_carry:
+no_carry1:
 
-    ; Compare to 50000 ($C350)
+    ; Compare to 1000000 = $0F4240
     lda count_hi
-    cmp #0xC3
+    cmp #0x0F
+    bne not_done
+    lda count_mi
+    cmp #0x42
     bne not_done
     lda count_lo
-    cmp #0x50
+    cmp #0x40
     beq done
 not_done:
     jmp mainloop
@@ -98,12 +97,10 @@ done:
     jsr 0xFFCC
     lda #4
     jsr 0xFFC3
-
     lda #0xFF
     sta 0xC000
     rts
 
-; === Errors ===
 open_error:
     pha
     jsr 0xFFCC
@@ -153,7 +150,6 @@ loop_chkout_error:
     sta 0xC000
     rts
 
-; === Hex print ===
 print_hex_space:
     pha
     lsr
@@ -178,6 +174,8 @@ hextable:
 
 .section .bss,"aw",@nobits
 count_lo:
+    .byte 0
+count_mi:
     .byte 0
 count_hi:
     .byte 0

@@ -2,10 +2,11 @@
 
 ## Confirmed findings
 
-### RND(1) is deterministic for a given calling context
-- BITS ($68) stays 0 throughout pure RND calls and 10 PRINT simulation — RND does not modify it, and FADD/QINT for positive numbers do not modify it
-- FACOV ($70) is set by the FADD+QINT operations between calls in the 10 PRINT context (equals M2 of the FADD result mantissa after QINT shifts it into FACOV)
-- Despite different FACOV values, the pure RND and 10 PRINT simulations produce **identical seed sequences** for at least 50,000 iterations (verified against VICE)
+### RND(1) is deterministic regardless of calling context
+- **MOVFM clears FACOV ($70) to zero** before every multiply. Confirmed from the Microsoft BASIC source (mist64/msbasic `LOAD_FAC_FROM_YA` zeroes FACEXTENSION). This means FACOV is always 0 entering FMULT during RND, no matter what BASIC operations ran between calls.
+- BITS ($68) stays 0 throughout pure RND calls and 10 PRINT simulation — RND does not modify it, and FADD/QINT for positive numbers do not modify it.
+- The pure RND and 10 PRINT simulations produce **identical seed sequences** for at least 50,000 iterations (verified against VICE). This is now explained: both have FACOV=0 and BITS=0 entering every multiply.
+- **RND(1) is a pure function of its 5-byte seed.** The hidden state does not affect it. The earlier FACOV/BITS investigation was a necessary dead end that proved this.
 
 ### Cycle analysis (from default seed)
 - Tail length: 71,549
@@ -38,18 +39,36 @@ Byte 1: $0B vs $07 (difference of 4). Exponent and bytes 2-4 are correct.
 
 ### What we know
 - BITS ($68) = 0 and FACOV ($70) = 0 in both the real C64 and our simulation — the hidden state is NOT the cause
+- **MOVFM clears FACOV to 0** before every multiply. The Microsoft source (mist64/msbasic `LOAD_FAC_FROM_YA`) explicitly zeroes FACEXTENSION. So FACOV is always 0 entering FMULT during RND, regardless of what BASIC operations ran between calls. Our `movfm()` setting `fac.ov = 0` is correct.
 - FACOV = 0 means the first multiplier byte processed is 0, which triggers the MULSHF byte-shift path
-- MULSHF fills the MSB of the result from BITS ($68) = 0, which our code also does (`res1 = 0` in the zero-byte case)
-- The bits_sweep analysis showed that FACOV values 0 and 1 produce $07, while values >= 2 produce $0B — but VICE produces $0B even with FACOV=0
-- This means our MULSHF path (or the subsequent shift-and-add rounds) has a carry propagation error
+- MULSHF shifts RESHO-RESLO right by one byte position, stores old RESLO into FACOV ($70), fills RESHO from BITS ($68) = 0. Our code does the equivalent with `res_ov = res4; res4 = res3; res3 = res2; res2 = res1; res1 = 0`.
+- The bits_sweep analysis showed that our code with FACOV 0 and 1 produces $07, while FACOV >= 2 produces $0B. But VICE with FACOV=0 produces $0B. Since MOVFM clears FACOV, the real C64 has FACOV=0 too — yet gets a different answer.
+- **The bug is purely in our shift-and-add multiply arithmetic**, not in hidden state tracking.
 
-### Theory
-The MULSHF path in the C64 ROM at $B983 does more than just shift bytes and fill from BITS. It also modifies FACOV ($70) — specifically, `STY $70` at $B987 stores the old LSB byte into FACOV before the shift. Our code doesn't do this — we only set `res_ov = res4` (moving the old byte 4 into the rounding position) but we may not be updating the FACOV register that feeds into subsequent processing.
+### Root cause: FOUND
+**The FADD is not a no-op.** Step-by-step state capture from VICE proves it:
 
-Alternatively: the byte-level shift in SHFTR2 uses indexed addressing (`LDY 4,X / STY $70 / LDY 3,X / STY 4,X / ...`) which shifts the RESULT register bytes, not the FAC bytes. When called from MULSHF (X=$25, pointing at RESHO-1), the indexing is different from when called from QINT (X=$61, pointing at FAC). Our code may be conflating these two contexts.
+```
+After FMULT:  FAC = 8B 8B 31 CE 21, FACOV=FE
+After FADD:   FAC = 8B 8B 31 CE 22, FACOV=13
+```
 
-### Next step
-Trace the multiply for input `$73 $44 $94 $D2 $A0` instruction by instruction through the 6502 ROM code (FMULT at $BA28), comparing against our C++ implementation at each step. The first divergence will reveal the exact carry error.
+FADD changed FACLO from $21 to $22 and FACOV from $FE to $13. The +1 in the LSB propagates through byte swap and normalize to produce the 4-unit difference in the final packed byte ($07 vs $0B).
+
+The mechanism: FADD saves FACOV ($FE) into OLDOV before shifting ARG right. After shifting ARG to align exponents (4 byte shifts + 2 bit shifts), ARG mantissa is all zeros but the rounding byte (A register) holds $2A — the shifted-down remnant of ARG's mantissa. Then `ADC OLDOV` adds $2A + $FE = $128, producing carry=1. This carry propagates into `ADC ARGLO` (which is $00 + $00 + 1 = $01), incrementing FACLO from $21 to $22. The ARG mantissa contributes nothing — the +1 comes entirely from the rounding byte carry.
+
+This is not a theory — it is traced instruction by instruction from the ROM source against the VICE state capture. Our simulation must implement FADD fully (including the OLDOV carry path) and be validated against VICE for 50,000+ iterations.
+
+### Fix required
+Implement FADD properly in `src/c64rnd.cpp` instead of treating it as a no-op. The full MBF floating-point addition must be performed, including:
+1. Alignment shift (shift the smaller operand right by the exponent difference)
+2. Addition of aligned mantissas
+3. Normalization of the result
+4. Proper handling of the rounding byte through all steps
+
+The current `fadd()` implementation returns early when the exponent difference is >= 40. This threshold is wrong — the 40-bit internal precision means the add can affect results when the exponent difference is up to 39 bits.
+
+After fixing FADD, re-validate against VICE for 50,000 iterations and re-run the cycle analysis.
 
 ## Open questions
 

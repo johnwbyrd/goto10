@@ -4,7 +4,14 @@
       "Read(//c/git/goto10/**)",
       "Read(//tmp/**)",
       "Bash(cmake -B build)",
-      "Bash(./build/Release/test_rnd.exe)"
+      "Bash(./build/Release/test_rnd.exe)",
+      "Bash(grep -l \"MLTPLY\\\\|MULSHF\\\\|FMULT\\\\|SHFTR2\" doc/refs/rom_src/*)",
+      "Bash(\"/c/Program Files/LLVM/bin/clang++.exe\" -std=c++17 -O0 -g -I src -o build/debug_multiply.exe src/debug_multiply.cpp src/c64rnd.cpp)",
+      "Bash(build/debug_multiply.exe)",
+      "Bash(cmake --build build --config Release --target debug_multiply)",
+      "Bash(build/Release/debug_multiply.exe)",
+      "Bash(/c/utl/llvm-mos/bin/clang.exe --target=mos -T/c/git/goto10/c64/c64_spy.ld -nostdlib -o /c/git/goto10/c64/rnd_debug_45295.prg /c/git/goto10/c64/rnd_debug_45295.s)",
+      "Bash(build/Release/compare_sampled.exe vice_pure.txt)"
     ],
     "additionalDirectories": [
       "C:\\git\\goto10\\docs\\refs",

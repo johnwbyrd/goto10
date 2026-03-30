@@ -99,18 +99,23 @@ mainloop:
     lda #0x0D
     jsr 0xFFD2
 
-    ; Increment 16-bit counter
+    ; Increment 24-bit counter
     inc count_lo
+    bne no_carry
+    inc count_mi
     bne no_carry
     inc count_hi
 no_carry:
 
-    ; Compare to 50000 ($C350)
+    ; Compare to 70000 = $011170
     lda count_hi
-    cmp #0xC3
+    cmp #0x01
+    bne not_done
+    lda count_mi
+    cmp #0x11
     bne not_done
     lda count_lo
-    cmp #0x50
+    cmp #0x70
     beq done
 not_done:
     jmp mainloop
