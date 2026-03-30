@@ -1,3 +1,10 @@
+// test_rnd.cpp — Smoke test and cycle verification for C64Rnd.
+//
+// Prints the first 20 RND values, verifies the first value matches
+// the known C64 result, prints 1000 characters of the 10 PRINT maze,
+// and verifies that seeds at positions mu and mu+lambda are identical
+// (confirming the cycle found by cycle_detect).
+
 #include "c64rnd.h"
 #include <cstdio>
 #include <cstring>
@@ -39,11 +46,11 @@ int main() {
     printf("\n");
 
     // --- Cycle verification ---
-    // Brent's algorithm found: tail (mu) = 71549, cycle (lambda) = 46813
+    // Brent's algorithm found: tail (mu) = 11793, cycle (lambda) = 58078
     // Verify by comparing the output at position mu with position mu+lambda.
     printf("\n--- Cycle verification ---\n");
-    const int mu = 71549;
-    const int lambda = 46813;
+    const int mu = 11793;
+    const int lambda = 58078;
 
     // Generate characters 0..mu+lambda+99, store the relevant windows
     rng = C64Rnd();

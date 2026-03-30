@@ -1,5 +1,16 @@
-; rnd_spy.s — Pure RND(1), 70000 iterations.
-; Print BITS, FACOV, and seed after each RND call.
+; rnd_spy.s — Call RND(1) repeatedly from 6502 assembly and print
+; the seed bytes to the VICE virtual printer after each call.
+;
+; No BASIC interpreter involvement. Sets FAC to 1.0, calls the ROM's
+; RND entry at $E097, captures the seed at $8B-$8F. This isolates the
+; RND function from any BASIC float operations that might modify BITS
+; or FACOV between calls.
+;
+; Output: one line per call, hex format: "BITS FACOV EXP M1 M2 M3 M4"
+; Change the 24-bit counter comparison to adjust iteration count.
+;
+; Build: clang --target=mos -Tc64_spy.ld -nostdlib -o rnd_spy.prg rnd_spy.s
+; Run:   python vice_run.py c64/rnd_spy.prg --printer output.txt
 
 .section .text,"ax",@progbits
 

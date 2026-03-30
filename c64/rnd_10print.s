@@ -1,6 +1,15 @@
-; rnd_10print.s — RND(1) + FADD 205.5 + QINT, 50000 iterations.
-; Print BITS, FACOV, and seed after each RND call.
-; 16-bit counter. JMP for loop (no branch range issues).
+; rnd_10print.s — Simulate the 10 PRINT one-liner's float operations.
+;
+; Each iteration: RND(1), FADD 205.5, QINT (same as CHR$ does).
+; Captures BITS ($68) and FACOV ($70) before each RND call, plus the
+; seed ($8B-$8F) after. This tests whether the FADD and QINT between
+; RND calls affect the seed sequence. (They don't — MOVFM clears FACOV.)
+;
+; Output: one line per call, hex format: "BITS FACOV EXP M1 M2 M3 M4"
+; Change the 24-bit counter comparison to adjust iteration count.
+;
+; Build: clang --target=mos -Tc64_spy.ld -nostdlib -o rnd_10print.prg rnd_10print.s
+; Run:   python vice_run.py c64/rnd_10print.prg --printer output.txt
 
 .section .text,"ax",@progbits
 

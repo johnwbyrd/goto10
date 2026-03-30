@@ -1,5 +1,10 @@
-// Generate the same output as rnd_spy.s: BITS FACOV SEED[5] in hex.
-// Since MOVFM clears FACOV and RND doesn't touch BITS, both are always 00.
+// gen_seeds.cpp — Generate RND(1) seed sequence in hex for validation.
+//
+// Output format matches rnd_spy.s: "BITS FACOV EXP M1 M2 M3 M4" per line.
+// BITS and FACOV are always 00 (MOVFM clears FACOV; RND doesn't touch BITS).
+// Used by diffing against VICE output to validate the C++ simulation.
+//
+// Usage: gen_seeds [count]
 #include "c64rnd.h"
 #include <cstdio>
 #include <cstdlib>

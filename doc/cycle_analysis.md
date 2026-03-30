@@ -1,64 +1,54 @@
 # Cycle Analysis
 
-## How the cycle was found
+## Method
 
-The cycle was found using [Brent's cycle detection algorithm](https://en.wikipedia.org/wiki/Cycle_detection#Brent's_algorithm), which finds the exact tail length (mu) and cycle length (lambda) of any eventually-periodic sequence using O(1) memory and at most mu + lambda steps.
+The cycle structure was found using [Brent's cycle detection algorithm](https://en.wikipedia.org/wiki/Cycle_detection#Brent's_algorithm), which finds the exact tail length (mu) and cycle length (lambda) of any eventually-periodic sequence using O(1) memory.
 
-The implementation (`src/cycle_detect.cpp`) uses an optimized state-step function that operates directly on the 5-byte MBF seed, reproducing the C64's shift-and-add multiply without floating-point conversion. The verification (`src/test_rnd.cpp`) independently confirms the result by generating 118,462 characters and comparing the seed and output at positions mu and mu + lambda.
+The implementation (`src/cycle_detect.cpp`) delegates each step to `C64Rnd::next()`, which replicates the C64's FMULT (including the carry leak between zero multiplier bytes), FADD (including the rounding byte carry), byte swap, normalize, and round/pack.
 
-Both computations complete in under a second on modern hardware.
+## Validation
 
-## Results
+The simulation was validated against VICE 3.9 running the actual C64 BASIC ROM:
 
-| Quantity | Value |
-|----------|-------|
-| **Tail length** (mu) | 71,549 |
-| **Cycle length** (lambda) | 46,813 |
-| **Total distinct values** | 118,362 |
+- **1,000,000 consecutive seeds** from pure RND(1) calls via 6502 assembly (`c64/rnd_spy.s`): byte-exact match, zero differences.
+- **100,000 seeds from the actual BASIC `10 PRINT` program** (`c64/10print.bas`), captured via breakpoint at the RND entry point (`src/vice_sample_rnd.py`): byte-exact match, zero differences.
 
-## Output distribution
+The pure RND sequence and the `10 PRINT` sequence produce identical seeds. This is because MOVFM clears FACOV to zero before every multiply (confirmed from the ROM source at code20 line 30), so the FADD and QINT operations between RND calls do not affect the next call's state.
 
-Within one full cycle of 46,813 characters:
+## Cycle catalog
 
-| Character | Count | Percentage |
-|-----------|-------|------------|
-| `\` (CHR$ 205) | 23,245 | 49.655% |
-| `/` (CHR$ 206) | 23,568 | 50.345% |
+`best_seed.cpp` scans seeds from `RND(-1)` through `RND(-432000)` (two hours of jiffy timer values). All seeds land on one of 12 distinct cycles:
 
-The split is nearly but not perfectly even, with a slight bias toward `/`.
+| Cycle length | First seed found |
+|-------------|-----------------|
+| 58,078 | RND(-1) |
+| 7,036 | RND(-25) |
+| 5,660 | RND(-39) |
+| 4,232 | RND(-503) |
+| 2,644 | RND(-181) |
+| 724 | RND(-2) |
+| 371 | RND(-94836) |
+| 295 | RND(-381) |
+| 207 | RND(-7737) |
+| 85 | RND(-152007) |
+| 23 | RND(-164855) |
+| 7 | RND(-77164) |
 
-## Validation against VICE
+The dominant cycle (58,078) captures the vast majority of seeds. The smaller cycles are rare attractors reached by specific mantissa patterns.
 
-The simulation was validated against VICE (the C64 emulator, version 3.9) running the actual C64 BASIC ROM:
+## Properties of the dominant cycle
 
-- **10,000 consecutive seeds**: byte-exact match, zero mismatches
-- **50,000 seeds (pure RND)**: byte-exact match against `c64/rnd_spy.s` (6502 assembly calling the ROM's RND routine directly)
-- **50,000 seeds (10 PRINT simulation)**: byte-exact match against `c64/rnd_10print.s` (RND + FADD 205.5 + QINT, simulating the actual 10 PRINT operations)
+Run `cycle_detect` to get current values for:
+- Tail length (mu): the number of unique values before entering the cycle
+- Cycle length (lambda): the repeating period
+- Output distribution: `\` vs `/` split within one cycle period
 
-The pure RND and 10 PRINT simulations produce **identical seed sequences** for all 50,000 tested iterations.
+## Two bugs in Microsoft's FMULT
 
-## The hidden state: BITS and FACOV
+The simulation's accuracy depends on replicating two undocumented behaviors in the C64's FMULT routine. See [doc/fmult_carry_bug.md](fmult_carry_bug.md) for details.
 
-The C64's floating-point workspace includes two registers not part of the 5-byte seed:
+1. **Carry leak**: When a multiplier byte is zero, the MULSHF routine falls through into SHIFTR, which uses the carry flag left by the previous byte's last LSR instruction. This causes a 9-bit shift instead of the expected 8-bit shift when the carry is 0.
 
-- **BITS ($68)**: Sign extension byte used by the right-shift routine (SHIFTR). Read by FMULT's MULSHF when a multiplier byte is zero.
-- **FACOV ($70)**: Rounding byte. Persists across calls and feeds into the next multiply as the 5th (least significant) multiplier byte.
+2. **FADD is not a no-op**: The additive constant (3.927677739E-8) is small but not zero relative to the 40-bit internal precision. When the post-multiply exponent is low enough, the rounding byte carry from FADD's alignment shift propagates into the mantissa LSB.
 
-These registers are shared with all other floating-point operations. Between RND calls, the BASIC interpreter's math operations (FADD for `205.5+`, QINT for `CHR$()`, etc.) modify FACOV. In the `10 PRINT` context, FACOV equals the second mantissa byte of the FADD result after QINT shifts it into the rounding position.
-
-Despite different FACOV values, the pure RND and 10 PRINT sequences produce identical seeds for at least 50,000 iterations. FACOV only affects the result when a zero multiplier byte triggers MULSHF, which is rare.
-
-BITS stays zero throughout both pure RND calls and the 10 PRINT simulation --- neither RND nor FADD/QINT for positive numbers modifies it.
-
-## Known simulation bug
-
-Our C++ simulation diverges from the real C64 at step 45,295:
-
-- **Input seed**: `$73 $44 $94 $D2 $A0` (unusually low exponent $73)
-- **Expected** (VICE): `$7E $0B $38 $C6 $2E`
-- **Our output**: `$7E $07 $38 $C6 $2E`
-- **Difference**: byte 1 is $0B vs $07 (off by 4)
-
-BITS and FACOV are both zero in both cases, so the hidden state is not the cause. The bug is in our implementation of the shift-and-add multiply. See [todo.md](../todo.md) for the current theory and next steps.
-
-The cycle analysis results (tail=71,549, cycle=46,813) are based on this simulation and may be slightly affected by the bug. However, since the first 45,294 steps are verified correct, the results are likely close to the true values.
+Both behaviors were discovered by comparing the simulation against VICE and tracing the divergence to specific instructions in the ROM source.

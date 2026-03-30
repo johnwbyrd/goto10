@@ -1,5 +1,17 @@
-// Scan RND(-N) seeds with dynamic programming and threading.
-// Tracks cycle ID and distance-to-cycle for every visited state.
+// best_seed.cpp — Scan RND(-N) seeds to find all reachable cycles.
+//
+// For each integer N (simulating RND(-TI) where TI is the jiffy timer),
+// computes the seed, walks forward until it hits a known state, and
+// records which cycle it reaches and how long the tail is.
+//
+// Uses a shared hash map of all visited states with a readers-writer lock
+// for thread safety. New cycles are discovered via Brent's algorithm.
+// After the first few hundred seeds populate the map, most lookups
+// terminate in 1-2 steps.
+//
+// Usage: best_seed [--max N] [--threads N]
+//   --max N       Scan RND(-1) through RND(-N). Default: 216000 (1 hour).
+//   --threads N   Worker threads. Default: hardware concurrency.
 
 #include "c64rnd.h"
 #include <cstdio>

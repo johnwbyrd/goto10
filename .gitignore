@@ -1,5 +1,8 @@
 # Build
 build/
+*.txt
+*.prg
+*.elf
 
 # IDE
 .vs/
